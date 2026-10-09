@@ -14,6 +14,7 @@ st.markdown("""
     .kpi-card { background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 15px; border-left: 5px solid #0a2540; box-shadow: 0 5px 15px rgba(0,0,0,0.08); text-align: center; }
     .kpi-label { font-size: 12px; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     .kpi-value { font-size: 28px; font-weight: 800; color: #0a2540; margin-top: 8px; }
+    .kpi-value.real { color: #d32f2f; }
     .section-title { color: #0a2540; font-size: 24px; font-weight: 700; margin: 30px 0 20px 0; padding-bottom: 10px; border-bottom: 3px solid #ffd700; }
     .disclaimer-box { background: #fff3cd; border-left: 5px solid #ffc107; padding: 20px; border-radius: 10px; margin-top: 30px; font-size: 12px; color: #856404; }
     .footer { text-align: center; padding: 30px; margin-top: 50px; background: #0a2540; color: white; border-radius: 15px; }
@@ -162,6 +163,7 @@ location = st.sidebar.selectbox("Preferred Location", locations, index=locations
 market_split = st.sidebar.selectbox("Market Split (Secondary / Off-Plan)", ["60/40", "50/50", "40/60", "30/70", "70/30"], index=0)
 horizon = st.sidebar.slider("Investment Horizon (Years)", 3, 15, 5)
 friction_cost = st.sidebar.number_input("Friction Cost (DLD + Agency)", value=0.06, step=0.01, format="%.2f")
+inflation_rate = st.sidebar.slider("Expected Inflation Rate (%)", 1.0, 10.0, 4.0, 0.5) # NEW INFLATION INPUT
 
 # --- CALCULATIONS ---
 sec_pct, op_pct = map(int, market_split.split('/'))
@@ -188,13 +190,20 @@ projected_capital_gain = (value_op - principal_op) + (value_sec - principal_sec)
 weighted_return = (sec_cap_app * sec_pct) + (op_cap_app * op_pct) + (sec_rent_yield * sec_pct)
 risk_score = min(10.0, round((weighted_return / abs(crash_drop)) * 10, 1))
 
+# INFLATION ADJUSTMENT
+inflation_factor = (1 + inflation_rate/100) ** horizon
+real_portfolio_value = total_portfolio_value / inflation_factor
+real_capital_gain = projected_capital_gain / inflation_factor
+
 # --- KPI CARDS ---
 st.markdown('<div class="section-title">📊 Portfolio Summary</div>', unsafe_allow_html=True)
 col1, col2, col3, col4 = st.columns(4)
-with col1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Projected Capital Gain</div><div class="kpi-value">AED {projected_capital_gain:,.0f}</div></div>', unsafe_allow_html=True)
+with col1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Nominal Capital Gain</div><div class="kpi-value">AED {projected_capital_gain:,.0f}</div></div>', unsafe_allow_html=True)
 with col2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Expected Rental Income</div><div class="kpi-value">AED {total_rent:,.0f}</div></div>', unsafe_allow_html=True)
-with col3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Portfolio Value</div><div class="kpi-value">AED {total_portfolio_value:,.0f}</div></div>', unsafe_allow_html=True)
-with col4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Risk Adjusted Score</div><div class="kpi-value">{risk_score} / 10</div></div>', unsafe_allow_html=True)
+with col3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Portfolio Value (Nominal)</div><div class="kpi-value">AED {total_portfolio_value:,.0f}</div></div>', unsafe_allow_html=True)
+with col4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Real Value (Inflation Adjusted)</div><div class="kpi-value real">AED {real_portfolio_value:,.0f}</div></div>', unsafe_allow_html=True)
+
+st.info(f"💡 **Inflation Impact:** Over {horizon} years at {inflation_rate}% inflation, your purchasing power adjusts the final value from **AED {total_portfolio_value:,.0f}** to a real value of **AED {real_portfolio_value:,.0f}**.")
 
 # --- TABLE ---
 st.markdown('<div class="section-title">📈 Phased Capital Deployment & Equity Recycling</div>', unsafe_allow_html=True)
@@ -218,13 +227,14 @@ chart_data = pd.DataFrame({
     'Off-Plan Capital': [principal_op * ((1 + op_cap_app) ** t) for t in years],
     'Secondary Capital': [principal_sec * ((1 + sec_cap_app) ** t) for t in years],
     'Cumulative Rent': [principal_sec * sec_rent_yield * t for t in years],
-    'Total Portfolio Value': [principal_op * ((1 + op_cap_app) ** t) + principal_sec * ((1 + sec_cap_app) ** t) + (principal_sec * sec_rent_yield * t) for t in years]
+    'Total Portfolio Value': [principal_op * ((1 + op_cap_app) ** t) + principal_sec * ((1 + sec_cap_app) ** t) + (principal_sec * sec_rent_yield * t) for t in years],
+    'Inflation Adjusted Value': [(principal_op * ((1 + op_cap_app) ** t) + principal_sec * ((1 + sec_cap_app) ** t) + (principal_sec * sec_rent_yield * t)) / ((1 + inflation_rate/100) ** t) for t in years]
 }).set_index('Year')
 
 col_chart1, col_chart2 = st.columns(2)
 with col_chart1:
-    st.subheader("Growth Over Time")
-    st.line_chart(chart_data)
+    st.subheader("Nominal vs Real Growth")
+    st.line_chart(chart_data[['Total Portfolio Value', 'Inflation Adjusted Value']])
 with col_chart2:
     st.subheader("Budget Allocation")
     st.bar_chart(pd.DataFrame({'Market': ['Secondary Market', 'Off-Plan Market'], 'Amount': [budg_sec, budg_op]}).set_index('Market'))
@@ -240,20 +250,22 @@ with col_c3: st.metric("Potential Loss", f"AED {crash_loss:,.0f}")
 
 # --- AI ADVISOR ---
 st.markdown('<div class="section-title">🤖 Uzair Finance AI Advisor</div>', unsafe_allow_html=True)
-user_question = st.text_input("💬 Ask the AI Advisor:", placeholder="e.g., What is my risk level? or Tell me about rental income")
+user_question = st.text_input("💬 Ask the AI Advisor:", placeholder="e.g., What is my risk level? or How does inflation affect me?")
 if user_question:
     q = user_question.lower()
     if any(w in q for w in ["risk", "safe", "crash"]):
         st.info(f"**AI Advisor:** Your risk-adjusted score is {risk_score}/10. Location ({location}) has a historical crash drop of {crash_drop*100:.0f}%. {'Safe investment.' if risk_score > 7 else 'Consider diversifying.'}")
+    elif any(w in q for w in ["inflation", "mehngai", "real value"]):
+        st.info(f"**AI Advisor:** At {inflation_rate}% inflation, your AED {total_portfolio_value:,.0f} will have a real purchasing power of AED {real_portfolio_value:,.0f} in {horizon} years. Real estate historically beats inflation in Dubai.")
     elif any(w in q for w in ["rent", "rental", "income", "yield"]):
         st.info(f"**AI Advisor:** Expected annual rent is AED {annual_rent:,.0f} (Yield: {sec_rent_yield*100:.1f}%). Over {horizon} years, total rent = AED {total_rent:,.0f}.")
     elif any(w in q for w in ["growth", "return", "profit", "gain"]):
-        st.info(f"**AI Advisor:** Portfolio grows from AED {budget:,.0f} to AED {total_portfolio_value:,.0f} in {horizon} years. Total return: {((total_portfolio_value/budget)-1)*100:.1f}%.")
+        st.info(f"**AI Advisor:** Portfolio grows from AED {budget:,.0f} to AED {total_portfolio_value:,.0f} in {horizon} years. Total nominal return: {((total_portfolio_value/budget)-1)*100:.1f}%.")
     elif any(w in q for w in ["recommend", "suggest", "advice", "best"]):
         st.info(f"**AI Advisor:** For AED {budget:,.0f} with {market_split} split, {location} shows strong fundamentals. Increase off-plan if horizon is 7+ years.")
     else:
-        st.info("**AI Advisor:** I can help with risk analysis, rental income, growth forecasts, and recommendations. Ask specifically!")
+        st.info("**AI Advisor:** I can help with risk, inflation, rental income, and growth forecasts. Ask specifically!")
 
 # --- FOOTER ---
-st.markdown('<div class="disclaimer-box"><strong>Disclaimer:</strong> The \'100% Special Case\' represents extreme outlier projects. Standard expectation is 10-15% annually. Includes friction costs.</div>', unsafe_allow_html=True)
+st.markdown('<div class="disclaimer-box"><strong>Disclaimer:</strong> The \'100% Special Case\' represents extreme outlier projects. Standard expectation is 10-15% annually. Includes friction costs and inflation adjustments.</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="footer"><h3>💼 UZAIR FINANCE</h3><p>Executive Wealth Calculator • Dubai Real Estate Intelligence</p><p style="font-size: 11px; opacity: 0.7;">© {datetime.now().year} Uzair Finance. All rights reserved.</p></div>', unsafe_allow_html=True)
